@@ -2,7 +2,7 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { login, setToken, setUser } from '@/lib/api';
-import { Zap, Eye, EyeOff } from 'lucide-react';
+import { Eye, EyeOff } from 'lucide-react';
 
 export default function LoginPage() {
   const router = useRouter();
@@ -33,12 +33,15 @@ export default function LoginPage() {
       <div className="w-full max-w-sm">
         {/* Logo */}
         <div className="text-center mb-10">
-          <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl mb-4"
-            style={{ background: 'linear-gradient(135deg, #7C3AED, #F472B6)', boxShadow: '0 8px 32px rgba(139,92,246,0.4)' }}>
-            <Zap size={32} className="text-white" />
-          </div>
-          <h1 className="text-3xl font-bold text-white tracking-tight">StayFitx</h1>
-          <p className="text-sm mt-1" style={{ color: 'var(--muted)' }}>by Syam — Trainer Scheduling</p>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src="/logo.jpg"
+            alt="StayFit-XbyShyam"
+            className="w-24 h-24 rounded-full object-cover mx-auto mb-4 shadow-2xl"
+            style={{ boxShadow: '0 8px 40px rgba(139,92,246,0.4)' }}
+          />
+          <h1 className="text-2xl font-bold text-white tracking-tight">StayFit-XbyShyam</h1>
+          <p className="text-sm mt-1" style={{ color: 'var(--muted)' }}>Trainer Scheduling Platform</p>
         </div>
 
         {/* Card */}
