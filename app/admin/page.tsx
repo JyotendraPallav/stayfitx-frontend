@@ -4,7 +4,7 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { getUser, clearToken, adminGetSchedule, adminGetTrainers, adminCreateTrainer, adminGetNotifications, adminMarkRead, adminCancelSeries, adminGetSeries } from '@/lib/api';
 import { format, addDays, subDays, startOfWeek } from 'date-fns';
-import { LogOut, Bell, ChevronLeft, ChevronRight, Plus, X, Clock, MapPin, BarChart2, CalendarDays, Users, Upload, RefreshCw, Repeat, UserCheck, UserX, Phone, Mail, TrendingUp, AlertTriangle } from 'lucide-react';
+import { LogOut, Bell, ChevronLeft, ChevronRight, Plus, X, Clock, MapPin, BarChart2, CalendarDays, Users, Upload, RefreshCw, Repeat, UserCheck, UserX, Phone, Mail, TrendingUp, AlertTriangle, Activity, Zap } from 'lucide-react';
 
 type Session = {
   id: string; trainer_name: string; trainer_id: string;
@@ -71,7 +71,7 @@ function sessionOverlapsHour(s: Session, hour: number): boolean {
 export default function AdminPage() {
   const router = useRouter();
   const user = getUser();
-  const [view, setView] = useState<'daily' | 'weekly' | 'monthly'>('daily');
+  const [view, setView] = useState<'daily' | 'weekly' | 'monthly' | 'summary'>('daily');
   const [currentDate, setCurrentDate] = useState(new Date());
   const [sessions, setSessions] = useState<Session[]>([]);          // today's sessions (daily view)
   const [weekSessions, setWeekSessions] = useState<Record<string, Session[]>>({});  // weekly view
@@ -87,6 +87,11 @@ export default function AdminPage() {
   const [trainerSeries, setTrainerSeries] = useState<SeriesEntry[]>([]);
   const [trainerWeekSessions, setTrainerWeekSessions] = useState<Session[]>([]);
   const [trainerDetailLoading, setTrainerDetailLoading] = useState(false);
+
+  // Summary view data
+  const [summaryLoading, setSummaryLoading] = useState(false);
+  const [summaryWeekSessions, setSummaryWeekSessions] = useState<Record<string, Session[]>>({});
+  const [summarySeries, setSummarySeries] = useState<SeriesEntry[]>([]);
 
   // Add trainer form
   const [newTrainerName, setNewTrainerName] = useState('');
@@ -134,6 +139,26 @@ export default function AdminPage() {
   useEffect(() => {
     if (view === 'weekly') fetchWeek();
   }, [view, fetchWeek]);
+
+  // Fetch summary data when summary tab opens
+  const fetchSummary = useCallback(async () => {
+    setSummaryLoading(true);
+    try {
+      const [seriesData, ...weekResults] = await Promise.all([
+        adminGetSeries(),
+        ...weekDays.map(d => adminGetSchedule(d)),
+      ]);
+      setSummarySeries(seriesData.series || []);
+      const map: Record<string, Session[]> = {};
+      weekDays.forEach((d, i) => { map[d] = weekResults[i].sessions; });
+      setSummaryWeekSessions(map);
+    } catch { /* non-fatal */ }
+    finally { setSummaryLoading(false); }
+  }, [weekDays]);
+
+  useEffect(() => {
+    if (view === 'summary') fetchSummary();
+  }, [view, fetchSummary]);
 
   // Stable trainer→color map (keyed by trainer name)
   const allTrainerNames = useMemo(() => {
@@ -277,19 +302,20 @@ export default function AdminPage() {
             <p className="text-xs" style={{ color: 'var(--muted)' }}>{format(currentDate, 'MMMM yyyy')}</p>
           </div>
           <div className="glass p-1 rounded-xl flex text-xs">
-            {(['daily', 'weekly', 'monthly'] as const).map(v => (
+            {(['daily', 'weekly', 'monthly', 'summary'] as const).map(v => (
               <button key={v} onClick={() => setView(v)}
                 className={`px-3 py-2 rounded-lg font-medium transition-all ${view === v ? 'bg-white/10 text-white font-bold' : 'text-slate-400 hover:text-white'}`}>
-                {v === 'daily'   ? <><CalendarDays size={12} className="inline mr-1" />Daily</>   :
-                 v === 'weekly'  ? <><BarChart2 size={12} className="inline mr-1" />Weekly</>  :
-                                   <><Users size={12} className="inline mr-1" />Roster</>}
+                {v === 'daily'   ? <><CalendarDays size={12} className="inline mr-1" />Daily</>    :
+                 v === 'weekly'  ? <><BarChart2 size={12} className="inline mr-1" />Weekly</>   :
+                 v === 'monthly' ? <><Users size={12} className="inline mr-1" />Roster</>       :
+                                   <><Activity size={12} className="inline mr-1" />KPIs</>}
               </button>
             ))}
           </div>
         </div>
 
-        {/* Date nav */}
-        <div className="flex items-center gap-3">
+        {/* Date nav — hidden on summary */}
+        <div className={`flex items-center gap-3 ${view === 'summary' ? 'hidden' : ''}`}>
           <button onClick={() => setCurrentDate(d => view === 'weekly' ? addDays(d, -7) : subDays(d, 1))} className="btn-ghost p-2 rounded-lg"><ChevronLeft size={18} /></button>
           <span className="text-white font-semibold text-sm flex-1 text-center">
             {view === 'daily'  ? format(currentDate, 'EEE, dd MMM yyyy') :
@@ -555,6 +581,213 @@ export default function AdminPage() {
             </div>
           </div>
         )}
+      </div>
+
+        {/* ── SUMMARY / KPI DASHBOARD ── */}
+        {view === 'summary' && (() => {
+          const allWeek = Object.values(summaryWeekSessions).flat();
+          const weekScheduled   = allWeek.filter(s => s.status === 'scheduled');
+          const weekCancelled   = allWeek.filter(s => s.status === 'cancelled');
+          const weekRescheduled = allWeek.filter(s => s.status === 'rescheduled');
+          const totalWeek       = allWeek.length;
+          const cancelRate      = totalWeek > 0 ? Math.round((weekCancelled.length / totalWeek) * 100) : 0;
+          const activeClients   = [...new Set(summarySeries.map(s => s.client_name))].length;
+
+          // Per-trainer sessions this week
+          const trainerSessionCounts = trainers.map(t => ({
+            trainer: t,
+            count: weekScheduled.filter(s => s.trainer_name === t.name).length,
+            cancelled: weekCancelled.filter(s => s.trainer_name === t.name).length,
+          })).sort((a, b) => b.count - a.count);
+          const maxCount = Math.max(1, trainerSessionCounts[0]?.count || 1);
+
+          // Busiest day of the week
+          const DAY_NAMES_SHORT = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+          const dayTotals = weekDays.map((d, i) => ({
+            label: DAY_NAMES_SHORT[i],
+            date: d,
+            count: (summaryWeekSessions[d] || []).filter(s => s.status === 'scheduled').length,
+          }));
+          const maxDay = Math.max(1, ...dayTotals.map(d => d.count));
+
+          // Peak hour (across whole week)
+          const hourCounts: Record<number, number> = {};
+          weekScheduled.forEach(s => {
+            const h = new Date(s.start_datetime).getHours();
+            hourCounts[h] = (hourCounts[h] || 0) + 1;
+          });
+          const peakHourEntry = Object.entries(hourCounts).sort((a,b) => b[1]-a[1])[0];
+          const peakHour = peakHourEntry ? parseInt(peakHourEntry[0]) : null;
+          const peakLabel = peakHour === null ? '—' : peakHour < 12 ? `${peakHour}:00 AM` : peakHour === 12 ? '12:00 PM' : `${peakHour-12}:00 PM`;
+
+          // Alerts
+          const idleTrainers  = trainerSessionCounts.filter(t => t.count === 0);
+          const highCancellers = trainerSessionCounts.filter(t => {
+            const total = t.count + t.cancelled;
+            return total > 0 && (t.cancelled / total) > 0.2;
+          });
+
+          return (
+            <div className="space-y-5">
+              {summaryLoading ? (
+                <div className="flex items-center justify-center py-16 gap-3" style={{ color: 'var(--muted)' }}>
+                  <RefreshCw size={18} className="animate-spin" />
+                  <span className="text-sm">Loading dashboard…</span>
+                </div>
+              ) : (
+                <>
+                  {/* Hero KPI strip */}
+                  <div className="grid grid-cols-2 gap-3">
+                    {[
+                      { label: 'Active Clients', value: activeClients, icon: Users, color: '#A78BFA', sub: 'across all trainers' },
+                      { label: 'Sessions This Week', value: weekScheduled.length, icon: CalendarDays, color: '#34D399', sub: `+${weekRescheduled.length} rescheduled` },
+                      { label: 'Total Trainers', value: trainers.length, icon: UserCheck, color: '#38BDF8', sub: `${idleTrainers.length > 0 ? idleTrainers.length + ' idle' : 'all active'}` },
+                      { label: 'Cancel Rate', value: `${cancelRate}%`, icon: AlertTriangle, color: cancelRate > 20 ? '#F87171' : cancelRate > 10 ? '#FCD34D' : '#34D399', sub: `${weekCancelled.length} cancelled` },
+                    ].map(({ label, value, icon: Icon, color, sub }) => (
+                      <div key={label} className="glass rounded-2xl p-4 flex flex-col gap-2 relative overflow-hidden">
+                        <div className="absolute -right-3 -top-3 w-16 h-16 rounded-full opacity-10" style={{ background: color }} />
+                        <div className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0" style={{ background: `${color}20` }}>
+                          <Icon size={16} style={{ color }} />
+                        </div>
+                        <p className="text-2xl font-extrabold text-white">{value}</p>
+                        <div>
+                          <p className="text-xs font-semibold text-white">{label}</p>
+                          <p className="text-[10px] mt-0.5" style={{ color: 'var(--muted)' }}>{sub}</p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Week session bar chart */}
+                  <div className="glass rounded-2xl p-5">
+                    <p className="text-xs font-bold uppercase tracking-widest mb-4 flex items-center gap-2" style={{ color: 'var(--muted)' }}>
+                      <BarChart2 size={12} /> Sessions by Day
+                    </p>
+                    <div className="flex items-end gap-2 h-24">
+                      {dayTotals.map(({ label, date, count }) => {
+                        const isToday = date === format(new Date(), 'yyyy-MM-dd');
+                        const heightPct = maxDay > 0 ? Math.max(8, Math.round((count / maxDay) * 100)) : 8;
+                        return (
+                          <div key={date} className="flex-1 flex flex-col items-center gap-1.5">
+                            <span className="text-[10px] font-bold" style={{ color: count > 0 ? '#A78BFA' : 'var(--muted)' }}>
+                              {count > 0 ? count : ''}
+                            </span>
+                            <button
+                              onClick={() => { setCurrentDate(new Date(date + 'T12:00:00')); setView('daily'); }}
+                              className="w-full rounded-lg transition-all hover:opacity-80 active:scale-95"
+                              style={{
+                                height: `${heightPct}%`,
+                                background: isToday
+                                  ? 'linear-gradient(135deg,#7C3AED,#A78BFA)'
+                                  : count > 0 ? 'rgba(139,92,246,0.35)' : 'rgba(255,255,255,0.05)',
+                                boxShadow: isToday ? '0 0 12px rgba(139,92,246,0.4)' : 'none',
+                                border: isToday ? '1px solid rgba(139,92,246,0.5)' : '1px solid rgba(255,255,255,0.06)',
+                              }} />
+                            <span className="text-[9px]" style={{ color: isToday ? '#A78BFA' : 'var(--muted)' }}>{label}</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* Peak time + quick stats row */}
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="glass rounded-2xl p-4 flex flex-col gap-1">
+                      <div className="flex items-center gap-2 mb-1">
+                        <Zap size={13} style={{ color: '#FCD34D' }} />
+                        <p className="text-xs font-bold uppercase tracking-widest" style={{ color: 'var(--muted)' }}>Peak Hour</p>
+                      </div>
+                      <p className="text-xl font-extrabold text-white">{peakLabel}</p>
+                      <p className="text-[10px]" style={{ color: 'var(--muted)' }}>
+                        {peakHourEntry ? `${peakHourEntry[1]} sessions` : 'No data yet'}
+                      </p>
+                    </div>
+                    <div className="glass rounded-2xl p-4 flex flex-col gap-1">
+                      <div className="flex items-center gap-2 mb-1">
+                        <TrendingUp size={13} style={{ color: '#34D399' }} />
+                        <p className="text-xs font-bold uppercase tracking-widest" style={{ color: 'var(--muted)' }}>Recurring Series</p>
+                      </div>
+                      <p className="text-xl font-extrabold text-white">{summarySeries.length}</p>
+                      <p className="text-[10px]" style={{ color: 'var(--muted)' }}>active client schedules</p>
+                    </div>
+                  </div>
+
+                  {/* Trainer leaderboard */}
+                  <div className="glass rounded-2xl overflow-hidden">
+                    <div className="p-4 border-b" style={{ borderColor: 'var(--border)' }}>
+                      <p className="text-xs font-bold uppercase tracking-widest flex items-center gap-2" style={{ color: 'var(--muted)' }}>
+                        <TrendingUp size={12} /> Trainer Leaderboard — This Week
+                      </p>
+                    </div>
+                    {trainerSessionCounts.length === 0 ? (
+                      <p className="p-6 text-center text-sm" style={{ color: 'var(--muted)' }}>No trainer data yet.</p>
+                    ) : trainerSessionCounts.map(({ trainer, count, cancelled }, i) => {
+                      const color = TRAINER_PALETTE[trainers.findIndex(t => t.id === trainer.id) % TRAINER_PALETTE.length];
+                      const barPct = Math.round((count / maxCount) * 100);
+                      const trainerCancelRate = (count + cancelled) > 0 ? Math.round((cancelled / (count + cancelled)) * 100) : 0;
+                      return (
+                        <div key={trainer.id} className="p-4 border-b last:border-b-0" style={{ borderColor: 'var(--border)' }}>
+                          <div className="flex items-center gap-3 mb-2">
+                            <span className="text-xs font-bold w-4 text-center" style={{ color: 'var(--muted)' }}>#{i+1}</span>
+                            <div className="w-7 h-7 rounded-full flex items-center justify-center text-[10px] font-bold text-white flex-shrink-0"
+                              style={{ background: color.bg }}>
+                              {initials(trainer.name)}
+                            </div>
+                            <span className="text-sm font-semibold text-white flex-1 truncate">{trainer.name}</span>
+                            <span className="text-sm font-bold text-white">{count}</span>
+                            {trainerCancelRate > 20 && (
+                              <span className="badge badge-red">{trainerCancelRate}% cancel</span>
+                            )}
+                          </div>
+                          {/* Mini progress bar */}
+                          <div className="ml-7 h-1.5 rounded-full overflow-hidden" style={{ background: 'rgba(255,255,255,0.06)' }}>
+                            <div className="h-full rounded-full transition-all"
+                              style={{ width: `${barPct}%`, background: color.solid }} />
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  {/* Alerts */}
+                  {(idleTrainers.length > 0 || highCancellers.length > 0) && (
+                    <div className="glass rounded-2xl p-5 space-y-3" style={{ border: '1px solid rgba(245,158,11,0.2)', background: 'rgba(245,158,11,0.04)' }}>
+                      <p className="text-xs font-bold uppercase tracking-widest flex items-center gap-2 text-amber-400">
+                        <AlertTriangle size={12} /> Needs Attention
+                      </p>
+                      {idleTrainers.map(({ trainer }) => (
+                        <div key={trainer.id} className="flex items-center gap-3">
+                          <div className="w-6 h-6 rounded-full flex items-center justify-center text-[9px] font-bold text-white flex-shrink-0"
+                            style={{ background: TRAINER_PALETTE[trainers.findIndex(t => t.id === trainer.id) % TRAINER_PALETTE.length].bg }}>
+                            {initials(trainer.name)}
+                          </div>
+                          <p className="text-sm text-white"><span className="font-semibold">{trainer.name.split(' ')[0]}</span> has no sessions scheduled this week.</p>
+                        </div>
+                      ))}
+                      {highCancellers.map(({ trainer, cancelled, count }) => (
+                        <div key={trainer.id} className="flex items-center gap-3">
+                          <div className="w-6 h-6 rounded-full flex items-center justify-center text-[9px] font-bold text-white flex-shrink-0"
+                            style={{ background: TRAINER_PALETTE[trainers.findIndex(t => t.id === trainer.id) % TRAINER_PALETTE.length].bg }}>
+                            {initials(trainer.name)}
+                          </div>
+                          <p className="text-sm text-white">
+                            <span className="font-semibold">{trainer.name.split(' ')[0]}</span> — {cancelled} of {count + cancelled} sessions cancelled this week.
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Refresh */}
+                  <button onClick={fetchSummary} className="btn-ghost w-full text-sm flex items-center justify-center gap-2">
+                    <RefreshCw size={14} /> Refresh Dashboard
+                  </button>
+                </>
+              )}
+            </div>
+          );
+        })()}
+
       </div>
 
       {/* ── SESSION DETAIL DRAWER (daily view tap) ── */}
