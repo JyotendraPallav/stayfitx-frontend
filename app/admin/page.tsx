@@ -76,7 +76,7 @@ function sessionOverlapsHour(s: Session, hour: number): boolean {
 
 export default function AdminPage() {
   const router = useRouter();
-  const user = getUser();
+  const [user] = useState(() => getUser());
   const [view, setView] = useState<'daily' | 'weekly' | 'monthly' | 'summary'>('daily');
   const [currentDate, setCurrentDate] = useState(new Date());
   const [sessions, setSessions] = useState<Session[]>([]);          // today's sessions (daily view)

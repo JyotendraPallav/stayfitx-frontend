@@ -35,7 +35,7 @@ function initials(name: string) {
 
 export default function TrainerPage() {
   const router = useRouter();
-  const user = getUser();
+  const [user] = useState(() => getUser());
 
   const [tab, setTab] = useState<'schedule' | 'clients' | 'book'>('schedule');
   const [currentDate, setCurrentDate] = useState(new Date());
