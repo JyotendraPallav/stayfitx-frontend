@@ -2,7 +2,7 @@
 import { useEffect, useState, useCallback, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { getUser, clearToken, adminGetSchedule, adminGetTrainers, adminCreateTrainer, adminGetNotifications, adminMarkRead, adminCancelSeries, adminGetSeries } from '@/lib/api';
+import { getUser, clearToken, adminGetSchedule, adminGetTrainers, adminCreateTrainer, adminGetNotifications, adminMarkRead, adminCancelSeries, adminCancelSession, adminGetSeries } from '@/lib/api';
 import { format, addDays, subDays, startOfWeek } from 'date-fns';
 import { LogOut, Bell, ChevronLeft, ChevronRight, Plus, X, Clock, MapPin, BarChart2, CalendarDays, Users, Upload, RefreshCw, Repeat, UserCheck, UserX, Phone, Mail, TrendingUp, AlertTriangle, Activity, Zap } from 'lucide-react';
 
@@ -93,6 +93,9 @@ export default function AdminPage() {
   const [trainerSeries, setTrainerSeries] = useState<SeriesEntry[]>([]);
   const [trainerWeekSessions, setTrainerWeekSessions] = useState<Session[]>([]);
   const [trainerDetailLoading, setTrainerDetailLoading] = useState(false);
+  const [cancelReason, setCancelReason] = useState('');
+  const [cancellingSession, setCancellingSession] = useState(false);
+  const [showTodaySessions, setShowTodaySessions] = useState(false);
 
   // Summary view data
   const [summaryLoading, setSummaryLoading] = useState(false);
@@ -270,6 +273,20 @@ export default function AdminPage() {
     finally { setFormLoading(false); }
   }
 
+  async function handleCancelOneSession(sessionId: string, reason: string) {
+    try {
+      await adminCancelSession(sessionId, reason);
+      showToast('Session cancelled');
+      setSelectedSession(null);
+      setCancelReason('');
+      setCancellingSession(false);
+      fetchAll();
+      if (view === 'weekly') fetchWeek();
+    } catch (e: unknown) {
+      showToast(e instanceof Error ? e.message : 'Cancel failed');
+    }
+  }
+
   async function handleCancelSeries(seriesId: string) {
     if (!confirm('Cancel the ENTIRE recurring series? This will remove all future sessions for this client.')) return;
     await adminCancelSeries(seriesId);
@@ -417,9 +434,9 @@ export default function AdminPage() {
               </div>
             )}
             <div className="overflow-x-auto">
-              <div style={{ minWidth: '700px' }}>
+              <div style={{ minWidth: '820px' }}>
                 <div className="flex border-b" style={{ borderColor: 'var(--border)' }}>
-                  <div className="w-28 flex-shrink-0 p-3 text-[10px] font-bold uppercase tracking-widest" style={{ color: 'var(--muted)' }}>Trainer</div>
+                  <div className="w-40 flex-shrink-0 p-3 text-[10px] font-bold uppercase tracking-widest" style={{ color: 'var(--muted)' }}>Trainer</div>
                   <div className="flex-1 flex">
                     {HOUR_LABELS.map((h, i) => (
                       <div key={i} className="flex-1 p-2 text-center text-[10px] font-semibold border-r"
@@ -437,12 +454,12 @@ export default function AdminPage() {
                   return (
                     <div key={tName} className="flex border-b hover:bg-white/[0.01] transition-colors"
                       style={{ borderColor: 'var(--border)', borderLeft: `3px solid ${color.solid}` }}>
-                      <div className="w-28 flex-shrink-0 p-2.5 flex items-center gap-2" title={tName}>
+                      <div className="w-40 flex-shrink-0 p-2.5 flex items-center gap-2" title={tName}>
                         <div className="w-7 h-7 rounded-full flex items-center justify-center text-[10px] font-bold text-white flex-shrink-0"
                           style={{ background: color.bg }}>
                           {initials(tName)}
                         </div>
-                        <span className="text-xs font-semibold text-white truncate">{tName.split(' ')[0]}</span>
+                        <span className="text-xs font-semibold text-white truncate">{tName}</span>
                       </div>
                       <div className="flex-1 relative h-16">
                         <div className="absolute inset-0 flex pointer-events-none">
@@ -551,44 +568,25 @@ export default function AdminPage() {
                               className="border-r last:border-r-0 cursor-pointer active:bg-white/5 transition-colors"
                               style={{ borderColor: 'var(--border)', background: isToday ? `rgba(139,92,246,0.04)` : cellBg, verticalAlign: 'top' }}
                               onClick={() => openSlot(d, h)}>
-                              <div className="p-1.5 min-h-[52px]">
-                                {bookedHere.length === 0 ? (
-                                  /* Empty cell — show subtle free indicator */
-                                  trainers.length > 0 ? (
-                                    <div className="flex flex-wrap gap-0.5">
-                                      {trainers.slice(0, 3).map(t => {
-                                        const c = trainerColorMap[t.name];
-                                        return (
-                                          <div key={t.id} className="w-4 h-4 rounded-full opacity-20"
-                                            style={{ background: c?.solid || '#8B5CF6' }} />
-                                        );
-                                      })}
-                                      {trainers.length > 3 && <div className="text-[8px] opacity-20 self-center" style={{ color: 'var(--muted)' }}>+{trainers.length - 3}</div>}
-                                    </div>
-                                  ) : null
-                                ) : (
-                                  /* Booked — show colored trainer chips */
-                                  <div className="flex flex-col gap-1">
-                                    {bookedHere.map(s => {
-                                      const c = trainerColorMap[s.trainer_name] || TRAINER_PALETTE[0];
-                                      return (
-                                        <div key={s.id} className="flex items-center gap-1">
-                                          <div className="w-4 h-4 rounded-full flex items-center justify-center text-[7px] font-bold text-white flex-shrink-0"
-                                            style={{ background: c.bg }}>
-                                            {initials(s.trainer_name)}
-                                          </div>
-                                          <span className="text-[9px] text-white truncate leading-tight max-w-[48px]">{s.client_name.split(' ')[0]}</span>
-                                        </div>
-                                      );
-                                    })}
-                                    {/* Free count badge */}
-                                    {freeCount > 0 && (
-                                      <div className="text-[8px] font-semibold mt-0.5" style={{ color: '#34D399' }}>
-                                        +{freeCount} free
-                                      </div>
-                                    )}
+                              <div className="p-1.5 min-h-[48px] flex flex-col justify-center gap-0.5">
+                                {bookedHere.length > 0 && (
+                                  <div className="text-[10px] font-bold leading-tight" style={{ color: '#F87171' }}>
+                                    {bookedHere.length} busy
                                   </div>
                                 )}
+                                {freeCount > 0 ? (
+                                  <div className="text-[10px] font-bold leading-tight" style={{ color: '#34D399' }}>
+                                    {freeCount} free
+                                  </div>
+                                ) : (bookedHere.length > 0 && trainers.length > 0) ? (
+                                  <div className="text-[10px] font-semibold leading-tight" style={{ color: '#F87171' }}>
+                                    All full
+                                  </div>
+                                ) : (trainers.length > 0 && bookedHere.length === 0) ? (
+                                  <div className="text-[10px] leading-tight opacity-30" style={{ color: 'var(--muted)' }}>
+                                    All free
+                                  </div>
+                                ) : null}
                               </div>
                             </td>
                           );
@@ -607,18 +605,31 @@ export default function AdminPage() {
           <div className="space-y-4">
             <div className="grid grid-cols-3 gap-3">
               {[
-                { label: 'Trainers', value: trainers.length, icon: Users },
-                { label: "Today's Sessions", value: sessions.filter(s => s.status === 'scheduled').length, icon: CalendarDays },
-                { label: 'Cancelled', value: sessions.filter(s => s.status === 'cancelled').length, icon: X },
-              ].map(({ label, value, icon: Icon }) => (
-                <div key={label} className="glass rounded-2xl p-4 flex flex-col items-center gap-2 text-center">
-                  <div className="w-9 h-9 rounded-xl flex items-center justify-center" style={{ background: 'rgba(139,92,246,0.15)' }}>
-                    <Icon size={16} style={{ color: 'var(--brand-light)' }} />
+                { label: 'Trainers', value: trainers.length, icon: Users, tappable: false },
+                { label: "Today's Sessions", value: sessions.filter(s => s.status === 'scheduled').length, icon: CalendarDays, tappable: true },
+                { label: 'Cancelled', value: sessions.filter(s => s.status === 'cancelled').length, icon: X, tappable: false },
+              ].map(({ label, value, icon: Icon, tappable }) => {
+                const inner = (
+                  <>
+                    <div className="w-9 h-9 rounded-xl flex items-center justify-center" style={{ background: 'rgba(139,92,246,0.15)' }}>
+                      <Icon size={16} style={{ color: 'var(--brand-light)' }} />
+                    </div>
+                    <p className="text-2xl font-extrabold text-white">{value}</p>
+                    <p className="text-[10px] leading-tight" style={{ color: 'var(--muted)' }}>{label}</p>
+                    {tappable && <p className="text-[9px]" style={{ color: 'var(--brand-light)' }}>tap to view ↓</p>}
+                  </>
+                );
+                return tappable ? (
+                  <button key={label} onClick={() => setShowTodaySessions(true)}
+                    className="glass rounded-2xl p-4 flex flex-col items-center gap-2 text-center w-full hover:bg-white/[0.04] active:scale-95 transition-all">
+                    {inner}
+                  </button>
+                ) : (
+                  <div key={label} className="glass rounded-2xl p-4 flex flex-col items-center gap-2 text-center">
+                    {inner}
                   </div>
-                  <p className="text-2xl font-extrabold text-white">{value}</p>
-                  <p className="text-[10px] leading-tight" style={{ color: 'var(--muted)' }}>{label}</p>
-                </div>
-              ))}
+                );
+              })}
             </div>
             <div className="glass rounded-2xl overflow-hidden">
               <div className="p-4 border-b flex items-center justify-between" style={{ borderColor: 'var(--border)' }}>
@@ -823,7 +834,7 @@ export default function AdminPage() {
       {/* ── SESSION DETAIL DRAWER (daily view tap) ── */}
       {selectedSession && (
         <div className="fixed inset-0 z-50 flex items-end" style={{ background: 'rgba(0,0,0,0.65)' }}
-          onClick={() => setSelectedSession(null)}>
+          onClick={() => { setSelectedSession(null); setCancellingSession(false); setCancelReason(''); }}>
           <div className="glass w-full rounded-t-3xl p-6 pb-10 space-y-5 max-h-[80vh] overflow-y-auto"
             onClick={e => e.stopPropagation()}
             style={{ animation: 'slideUpSheet 0.25s ease-out' }}>
@@ -875,14 +886,47 @@ export default function AdminPage() {
                 <p className="text-white">{selectedSession.reschedule_reason}</p>
               </div>
             )}
-            {selectedSession.series_id && selectedSession.status === 'scheduled' && (
-              <button onClick={() => handleCancelSeries(selectedSession.series_id!)}
-                className="w-full rounded-xl py-3 text-sm font-bold text-red-400 transition-colors"
-                style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)' }}>
-                Cancel Entire Recurring Series
-              </button>
+            {selectedSession.status === 'scheduled' && (
+              <div className="space-y-2">
+                {!cancellingSession ? (
+                  <button onClick={() => setCancellingSession(true)}
+                    className="w-full rounded-xl py-3 text-sm font-bold text-red-400 transition-colors"
+                    style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)' }}>
+                    Cancel This Session
+                  </button>
+                ) : (
+                  <div className="space-y-2">
+                    <textarea
+                      className="glass-input text-sm resize-none"
+                      rows={2}
+                      placeholder="Reason for cancellation…"
+                      value={cancelReason}
+                      onChange={e => setCancelReason(e.target.value)}
+                    />
+                    <div className="grid grid-cols-2 gap-2">
+                      <button onClick={() => { setCancellingSession(false); setCancelReason(''); }}
+                        className="btn-ghost text-sm py-2">Back</button>
+                      <button
+                        onClick={() => handleCancelOneSession(selectedSession.id, cancelReason)}
+                        disabled={!cancelReason.trim()}
+                        className="rounded-xl py-2 text-sm font-bold text-red-400 transition-colors disabled:opacity-40"
+                        style={{ background: 'rgba(239,68,68,0.12)', border: '1px solid rgba(239,68,68,0.3)' }}>
+                        Confirm Cancel
+                      </button>
+                    </div>
+                  </div>
+                )}
+                {selectedSession.series_id && !cancellingSession && (
+                  <button onClick={() => handleCancelSeries(selectedSession.series_id!)}
+                    className="w-full rounded-xl py-2.5 text-xs font-semibold transition-colors"
+                    style={{ color: 'var(--muted)', background: 'rgba(239,68,68,0.04)', border: '1px solid rgba(239,68,68,0.12)' }}>
+                    Cancel Entire Recurring Series
+                  </button>
+                )}
+              </div>
             )}
-            <button onClick={() => setSelectedSession(null)} className="btn-ghost w-full text-sm">Close</button>
+            <button onClick={() => { setSelectedSession(null); setCancellingSession(false); setCancelReason(''); }}
+              className="btn-ghost w-full text-sm">Close</button>
           </div>
         </div>
       )}
@@ -1154,6 +1198,54 @@ export default function AdminPage() {
                 </>
               )}
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── TODAY'S SESSIONS DRAWER ── */}
+      {showTodaySessions && (
+        <div className="fixed inset-0 z-50 flex items-end" style={{ background: 'rgba(0,0,0,0.65)' }}
+          onClick={() => setShowTodaySessions(false)}>
+          <div className="glass w-full rounded-t-3xl p-6 pb-10 space-y-4 max-h-[80vh] overflow-y-auto"
+            onClick={e => e.stopPropagation()}
+            style={{ animation: 'slideUpSheet 0.25s ease-out' }}>
+            <div className="w-12 h-1 rounded-full bg-white/20 mx-auto" />
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-white font-bold text-lg">Today&apos;s Sessions</p>
+                <p className="text-sm" style={{ color: 'var(--muted)' }}>{format(currentDate, 'EEE, dd MMM yyyy')}</p>
+              </div>
+              <span className="badge badge-brand">{sessions.filter(s => s.status === 'scheduled').length} scheduled</span>
+            </div>
+            {sessions.filter(s => s.status !== 'cancelled').length === 0 ? (
+              <p className="text-center text-sm py-6" style={{ color: 'var(--muted)' }}>No active sessions today.</p>
+            ) : (
+              <div className="space-y-2">
+                {sessions.filter(s => s.status !== 'cancelled').map(s => {
+                  const c = trainerColorMap[s.trainer_name] || TRAINER_PALETTE[0];
+                  return (
+                    <button key={s.id}
+                      onClick={() => { setShowTodaySessions(false); setSelectedSession(s); }}
+                      className="w-full rounded-xl p-3.5 flex items-center gap-3 text-left transition-colors"
+                      style={{ background: 'rgba(0,0,0,0.2)', border: `1px solid ${c.solid}25` }}>
+                      <div className="w-9 h-9 rounded-full flex items-center justify-center text-xs font-bold text-white flex-shrink-0"
+                        style={{ background: c.bg }}>
+                        {initials(s.trainer_name)}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-white font-semibold text-sm truncate">{s.client_name}</p>
+                        <p className="text-xs truncate" style={{ color: 'var(--muted)' }}>
+                          {s.trainer_name} · {format(new Date(s.start_datetime), 'h:mm a')}
+                          {s.location ? ` · ${s.location}` : ''}
+                        </p>
+                      </div>
+                      <span className={`badge flex-shrink-0 ${s.status === 'scheduled' ? 'badge-green' : 'badge-amber'}`}>{s.status}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+            <button onClick={() => setShowTodaySessions(false)} className="btn-ghost w-full text-sm">Close</button>
           </div>
         </div>
       )}

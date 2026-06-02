@@ -73,6 +73,8 @@ export const adminCancelSeries = (seriesId: string) => apiFetch(`/admin/series/$
 export const adminGetSeries = () => apiFetch('/admin/series');
 export const adminGetNotifications = () => apiFetch('/admin/notifications');
 export const adminMarkRead = (id: string) => apiFetch(`/admin/notifications/${id}/read`, { method: 'PATCH' });
+export const adminCancelSession = (id: string, reason: string) =>
+  apiFetch(`/admin/sessions/${id}/cancel`, { method: 'PATCH', body: JSON.stringify({ reason }) });
 
 // ── Trainer ───────────────────────────────────────────────────────────────────
 export const trainerGetSchedule = (date: string) => apiFetch(`/trainer/schedule?date_str=${date}`);
