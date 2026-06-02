@@ -2,9 +2,9 @@
 import { useEffect, useState, useCallback, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { getUser, clearToken, adminGetSchedule, adminGetTrainers, adminCreateTrainer, adminGetNotifications, adminMarkRead, adminCancelSeries } from '@/lib/api';
+import { getUser, clearToken, adminGetSchedule, adminGetTrainers, adminCreateTrainer, adminGetNotifications, adminMarkRead, adminCancelSeries, adminGetSeries } from '@/lib/api';
 import { format, addDays, subDays, startOfWeek } from 'date-fns';
-import { LogOut, Bell, ChevronLeft, ChevronRight, Plus, X, Clock, MapPin, BarChart2, CalendarDays, Users, Upload, RefreshCw, Repeat, UserCheck, UserX } from 'lucide-react';
+import { LogOut, Bell, ChevronLeft, ChevronRight, Plus, X, Clock, MapPin, BarChart2, CalendarDays, Users, Upload, RefreshCw, Repeat, UserCheck, UserX, Phone, Mail, TrendingUp, AlertTriangle } from 'lucide-react';
 
 type Session = {
   id: string; trainer_name: string; trainer_id: string;
@@ -14,6 +14,17 @@ type Session = {
 };
 type Trainer = { id: string; name: string; email: string; phone?: string; upcoming_sessions: number };
 type Notification = { id: string; message: string; type: string; is_read: boolean; created_at: string };
+
+type SeriesEntry = {
+  id: string;
+  client_name: string;
+  trainer_name: string;
+  days_of_week: number[];
+  start_time: string;
+  end_time: string;
+  location: string;
+  frequency: string;
+};
 
 // Slot detail shown when user taps a weekly cell
 type SlotDetail = {
@@ -72,6 +83,10 @@ export default function AdminPage() {
   const [toast, setToast] = useState('');
   const [selectedSession, setSelectedSession] = useState<Session | null>(null);
   const [selectedSlot, setSelectedSlot] = useState<SlotDetail | null>(null);
+  const [selectedTrainer, setSelectedTrainer] = useState<Trainer | null>(null);
+  const [trainerSeries, setTrainerSeries] = useState<SeriesEntry[]>([]);
+  const [trainerWeekSessions, setTrainerWeekSessions] = useState<Session[]>([]);
+  const [trainerDetailLoading, setTrainerDetailLoading] = useState(false);
 
   // Add trainer form
   const [newTrainerName, setNewTrainerName] = useState('');
@@ -161,6 +176,29 @@ export default function AdminPage() {
     showToast('Series cancelled');
     setSelectedSession(null);
     fetchAll();
+  }
+
+  // Open trainer profile drawer — fetches their series + this week's sessions
+  async function openTrainerDetail(trainer: Trainer) {
+    setSelectedTrainer(trainer);
+    setTrainerDetailLoading(true);
+    setTrainerSeries([]);
+    setTrainerWeekSessions([]);
+    try {
+      const [seriesData, ...weekResults] = await Promise.all([
+        adminGetSeries(),
+        ...weekDays.map(d => adminGetSchedule(d)),
+      ]);
+      const filtered = (seriesData.series as SeriesEntry[]).filter(
+        s => s.trainer_name.toLowerCase() === trainer.name.toLowerCase()
+      );
+      setTrainerSeries(filtered);
+      const allWeekSessions: Session[] = weekResults.flatMap(
+        (r: { sessions: Session[] }) => r.sessions.filter(s => s.trainer_name === trainer.name)
+      );
+      setTrainerWeekSessions(allWeekSessions);
+    } catch { /* non-fatal */ }
+    finally { setTrainerDetailLoading(false); }
   }
 
   // Build slot detail when a weekly cell is tapped
@@ -493,10 +531,13 @@ export default function AdminPage() {
               ) : trainers.map((t, i) => {
                 const color = TRAINER_PALETTE[i % TRAINER_PALETTE.length];
                 return (
-                  <div key={t.id} className="flex items-center justify-between p-4 border-b hover:bg-white/[0.02] transition-colors" style={{ borderColor: 'var(--border)' }}>
+                  <button key={t.id}
+                    onClick={() => openTrainerDetail(t)}
+                    className="w-full flex items-center justify-between p-4 border-b hover:bg-white/[0.03] active:bg-white/[0.05] transition-colors text-left"
+                    style={{ borderColor: 'var(--border)' }}>
                     <div className="flex items-center gap-3 min-w-0">
-                      <div className="w-9 h-9 rounded-full flex items-center justify-center text-xs font-bold text-white flex-shrink-0"
-                        style={{ background: color.bg }}>
+                      <div className="w-10 h-10 rounded-full flex items-center justify-center text-xs font-bold text-white flex-shrink-0"
+                        style={{ background: color.bg, boxShadow: `0 0 12px ${color.shadow}` }}>
                         {initials(t.name)}
                       </div>
                       <div className="min-w-0">
@@ -504,8 +545,11 @@ export default function AdminPage() {
                         <p className="text-xs truncate" style={{ color: 'var(--muted)' }}>{t.phone || t.email}</p>
                       </div>
                     </div>
-                    <span className="badge badge-brand flex-shrink-0 ml-2">{t.upcoming_sessions} upcoming</span>
-                  </div>
+                    <div className="flex items-center gap-2 flex-shrink-0 ml-2">
+                      <span className="badge badge-brand">{t.upcoming_sessions} upcoming</span>
+                      <ChevronRight size={14} style={{ color: 'var(--muted)' }} />
+                    </div>
+                  </button>
                 );
               })}
             </div>
@@ -689,6 +733,195 @@ export default function AdminPage() {
           </div>
         </div>
       )}
+
+      {/* ── TRAINER PROFILE DRAWER ── */}
+      {selectedTrainer && (() => {
+        const tIdx = trainers.findIndex(t => t.id === selectedTrainer.id);
+        const color = TRAINER_PALETTE[tIdx >= 0 ? tIdx % TRAINER_PALETTE.length : 0];
+
+        // Derive stats from this week's sessions
+        const scheduled   = trainerWeekSessions.filter(s => s.status === 'scheduled');
+        const cancelled   = trainerWeekSessions.filter(s => s.status === 'cancelled');
+        const rescheduled = trainerWeekSessions.filter(s => s.status === 'rescheduled');
+        const totalWeek   = trainerWeekSessions.length;
+        const cancelRate  = totalWeek > 0 ? Math.round((cancelled.length / totalWeek) * 100) : 0;
+
+        // Unique clients this week
+        const weekClients = [...new Set(trainerWeekSessions.map(s => s.client_name))];
+
+        // Day-by-day schedule this week (only days with sessions)
+        const DAY_NAMES = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+        const byDay: Record<string, Session[]> = {};
+        weekDays.forEach((d, i) => {
+          const ds = trainerWeekSessions.filter(s => s.start_datetime.startsWith(d) && s.status !== 'cancelled');
+          if (ds.length > 0) byDay[DAY_NAMES[i]] = ds;
+        });
+
+        // Format days_of_week array to readable string
+        function formatDays(dow: number[]) {
+          return dow.sort().map(d => ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'][d]).join(' · ');
+        }
+
+        return (
+          <div className="fixed inset-0 z-50 flex items-end" style={{ background: 'rgba(0,0,0,0.7)' }}
+            onClick={() => setSelectedTrainer(null)}>
+            <div className="glass w-full rounded-t-3xl pb-10 max-h-[90vh] overflow-y-auto"
+              onClick={e => e.stopPropagation()}
+              style={{ animation: 'slideUpSheet 0.25s ease-out' }}>
+
+              {/* Colored header band */}
+              <div className="p-6 pb-5" style={{ background: `linear-gradient(135deg, ${color.solid}22, transparent)`, borderBottom: `1px solid ${color.solid}30` }}>
+                <div className="w-12 h-1 rounded-full bg-white/20 mx-auto mb-5" />
+                <div className="flex items-center gap-4">
+                  <div className="w-16 h-16 rounded-2xl flex items-center justify-center text-xl font-bold text-white flex-shrink-0"
+                    style={{ background: color.bg, boxShadow: `0 8px 24px ${color.shadow}` }}>
+                    {initials(selectedTrainer.name)}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-white font-bold text-xl truncate">{selectedTrainer.name}</p>
+                    <div className="flex flex-col gap-1 mt-1">
+                      {selectedTrainer.email && (
+                        <p className="text-xs flex items-center gap-1.5 truncate" style={{ color: 'var(--muted)' }}>
+                          <Mail size={11} /> {selectedTrainer.email}
+                        </p>
+                      )}
+                      {selectedTrainer.phone && (
+                        <p className="text-xs flex items-center gap-1.5" style={{ color: 'var(--muted)' }}>
+                          <Phone size={11} /> {selectedTrainer.phone}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="p-6 space-y-6">
+                {trainerDetailLoading ? (
+                  <div className="flex items-center justify-center py-10 gap-3" style={{ color: 'var(--muted)' }}>
+                    <RefreshCw size={16} className="animate-spin" />
+                    <span className="text-sm">Loading profile…</span>
+                  </div>
+                ) : (
+                  <>
+                    {/* Stats grid */}
+                    <div className="grid grid-cols-4 gap-2">
+                      {[
+                        { label: 'Upcoming', value: selectedTrainer.upcoming_sessions, color: '#A78BFA' },
+                        { label: 'This week', value: scheduled.length, color: '#34D399' },
+                        { label: 'Clients', value: weekClients.length, color: '#38BDF8' },
+                        { label: 'Cancel %', value: `${cancelRate}%`, color: cancelRate > 20 ? '#F87171' : '#FCD34D' },
+                      ].map(stat => (
+                        <div key={stat.label} className="glass rounded-xl p-3 text-center">
+                          <p className="text-lg font-extrabold" style={{ color: stat.color }}>{stat.value}</p>
+                          <p className="text-[9px] mt-0.5 leading-tight" style={{ color: 'var(--muted)' }}>{stat.label}</p>
+                        </div>
+                      ))}
+                    </div>
+
+                    {/* Status breakdown */}
+                    {totalWeek > 0 && (
+                      <div className="rounded-xl p-4 space-y-2" style={{ background: 'rgba(0,0,0,0.2)', border: '1px solid var(--border)' }}>
+                        <p className="text-xs font-bold uppercase tracking-widest mb-3 flex items-center gap-2" style={{ color: 'var(--muted)' }}>
+                          <TrendingUp size={12} /> This week&apos;s breakdown
+                        </p>
+                        {[
+                          { label: 'Scheduled', count: scheduled.length, cls: 'badge-green' },
+                          { label: 'Rescheduled', count: rescheduled.length, cls: 'badge-amber' },
+                          { label: 'Cancelled', count: cancelled.length, cls: 'badge-red' },
+                        ].map(row => (
+                          <div key={row.label} className="flex items-center justify-between">
+                            <span className="text-sm" style={{ color: 'var(--muted)' }}>{row.label}</span>
+                            <span className={`badge ${row.cls}`}>{row.count}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {/* This week's day schedule */}
+                    {Object.keys(byDay).length > 0 && (
+                      <div>
+                        <p className="text-xs font-bold uppercase tracking-widest mb-3 flex items-center gap-2" style={{ color: 'var(--muted)' }}>
+                          <CalendarDays size={12} /> This week&apos;s schedule
+                        </p>
+                        <div className="space-y-2">
+                          {Object.entries(byDay).map(([day, daySessions]) => (
+                            <div key={day} className="rounded-xl p-3" style={{ background: 'rgba(0,0,0,0.2)', border: '1px solid var(--border)' }}>
+                              <p className="text-xs font-bold mb-2" style={{ color: color.solid }}>{day}</p>
+                              <div className="space-y-1">
+                                {daySessions.map(s => (
+                                  <div key={s.id} className="flex items-center justify-between gap-2">
+                                    <span className="text-xs text-white font-medium truncate">{s.client_name}</span>
+                                    <div className="flex items-center gap-1.5 flex-shrink-0">
+                                      {s.location && <span className="text-[10px] truncate max-w-[70px]" style={{ color: 'var(--muted)' }}>{s.location}</span>}
+                                      <span className="text-[10px] font-semibold" style={{ color: 'var(--muted)' }}>
+                                        {format(new Date(s.start_datetime), 'h:mm a')}
+                                      </span>
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Active recurring clients */}
+                    {trainerSeries.length > 0 && (
+                      <div>
+                        <p className="text-xs font-bold uppercase tracking-widest mb-3 flex items-center gap-2" style={{ color: 'var(--muted)' }}>
+                          <Repeat size={12} /> Recurring clients ({trainerSeries.length})
+                        </p>
+                        <div className="space-y-2">
+                          {trainerSeries.map(s => (
+                            <div key={s.id} className="rounded-xl p-3.5 flex items-start gap-3"
+                              style={{ background: 'rgba(0,0,0,0.2)', border: '1px solid var(--border)' }}>
+                              <div className="w-7 h-7 rounded-full flex items-center justify-center text-[10px] font-bold text-white flex-shrink-0"
+                                style={{ background: 'rgba(255,255,255,0.1)' }}>
+                                {initials(s.client_name)}
+                              </div>
+                              <div className="flex-1 min-w-0">
+                                <p className="text-sm font-semibold text-white truncate">{s.client_name}</p>
+                                <p className="text-xs mt-0.5" style={{ color: 'var(--muted)' }}>
+                                  {formatDays(s.days_of_week)}
+                                </p>
+                                <div className="flex items-center gap-3 mt-1 text-[10px]" style={{ color: 'var(--muted)' }}>
+                                  <span className="flex items-center gap-1"><Clock size={9} /> {s.start_time.slice(0,5)}</span>
+                                  {s.location && <span className="flex items-center gap-1 truncate max-w-[100px]"><MapPin size={9} />{s.location}</span>}
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {trainerSeries.length === 0 && totalWeek === 0 && !trainerDetailLoading && (
+                      <div className="rounded-xl p-6 text-center" style={{ background: 'rgba(0,0,0,0.2)', border: '1px solid var(--border)' }}>
+                        <AlertTriangle size={24} className="mx-auto mb-2" style={{ color: 'var(--muted)' }} />
+                        <p className="text-sm" style={{ color: 'var(--muted)' }}>No sessions or recurring series found for this trainer.</p>
+                      </div>
+                    )}
+
+                    {/* Jump to today's timeline for this trainer */}
+                    <button
+                      onClick={() => {
+                        setCurrentDate(new Date());
+                        setView('daily');
+                        setSelectedTrainer(null);
+                      }}
+                      className="btn-brand w-full flex items-center justify-center gap-2 text-sm">
+                      <CalendarDays size={15} />
+                      View Today&apos;s Timeline
+                    </button>
+                    <button onClick={() => setSelectedTrainer(null)} className="btn-ghost w-full text-sm">Close</button>
+                  </>
+                )}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* ── ADD TRAINER MODAL ── */}
       {showAddTrainer && (

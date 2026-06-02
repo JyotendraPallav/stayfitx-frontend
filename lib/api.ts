@@ -70,6 +70,7 @@ export const adminGetCapacity = (weekOf: string) => apiFetch(`/admin/capacity?we
 export const adminGetTrainers = () => apiFetch('/admin/trainers');
 export const adminCreateTrainer = (body: object) => apiFetch('/admin/trainers', { method: 'POST', body: JSON.stringify(body) });
 export const adminCancelSeries = (seriesId: string) => apiFetch(`/admin/series/${seriesId}`, { method: 'DELETE' });
+export const adminGetSeries = () => apiFetch('/admin/series');
 export const adminGetNotifications = () => apiFetch('/admin/notifications');
 export const adminMarkRead = (id: string) => apiFetch(`/admin/notifications/${id}/read`, { method: 'PATCH' });
 
