@@ -85,3 +85,5 @@ export const trainerCancelSession = (id: string, reason: string) =>
   apiFetch(`/trainer/sessions/${id}/cancel`, { method: 'PATCH', body: JSON.stringify({ reason }) });
 export const trainerRescheduleSession = (id: string, body: object) =>
   apiFetch(`/trainer/sessions/${id}/reschedule`, { method: 'PATCH', body: JSON.stringify(body) });
+export const trainerGetNotifications = () => apiFetch('/trainer/notifications');
+export const trainerMarkRead = (id: string) => apiFetch(`/trainer/notifications/${id}/read`, { method: 'PATCH' });

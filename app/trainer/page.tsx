@@ -5,12 +5,13 @@ import {
   getUser, clearToken,
   trainerGetSchedule, trainerGetClients, trainerAddClient,
   trainerBookSession, trainerCancelSession, trainerRescheduleSession,
+  trainerGetNotifications, trainerMarkRead,
 } from '@/lib/api';
 import { format, addDays, subDays } from 'date-fns';
 import {
   LogOut, ChevronLeft, ChevronRight, Plus, X,
   Clock, MapPin, RefreshCw, Repeat, CalendarDays,
-  Users, BookOpen, CheckCircle,
+  Users, BookOpen, CheckCircle, Bell,
 } from 'lucide-react';
 
 type Session = {
@@ -61,6 +62,11 @@ export default function TrainerPage() {
   const [newClientNotes, setNewClientNotes] = useState('');
   const [addClientLoading, setAddClientLoading] = useState(false);
 
+  // Notifications
+  const [notifications, setNotifications] = useState<{id: string; type: string; message: string; is_read: boolean; created_at: string}[]>([]);
+  const [unread, setUnread] = useState(0);
+  const [showNotif, setShowNotif] = useState(false);
+
   // Book session form
   const [bookClientId, setBookClientId] = useState('');
   const [bookDate, setBookDate] = useState(format(new Date(), 'yyyy-MM-dd'));
@@ -90,14 +96,24 @@ export default function TrainerPage() {
     } catch { /* non-fatal */ }
   }, []);
 
+  const fetchNotifications = useCallback(async () => {
+    try {
+      const data = await trainerGetNotifications();
+      setNotifications(data.notifications);
+      setUnread(data.unread_count);
+    } catch { /* non-fatal */ }
+  }, []);
+
   useEffect(() => {
     if (!user) { router.push('/login'); return; }
     if (user.role !== 'trainer') { router.push('/admin'); return; }
     fetchSchedule();
     fetchClients();
-    const interval = setInterval(fetchSchedule, 60000);
-    return () => clearInterval(interval);
-  }, [user, router, fetchSchedule, fetchClients]);
+    fetchNotifications();
+    const scheduleInterval = setInterval(fetchSchedule, 60000);
+    const notifInterval = setInterval(fetchNotifications, 30000);
+    return () => { clearInterval(scheduleInterval); clearInterval(notifInterval); };
+  }, [user, router, fetchSchedule, fetchClients, fetchNotifications]);
 
   function closeDrawer() {
     setSelectedSession(null);
@@ -210,6 +226,13 @@ export default function TrainerPage() {
         <div className="flex items-center gap-1">
           <button onClick={fetchSchedule} className="btn-ghost p-2.5 rounded-lg" title="Refresh">
             <RefreshCw size={15} />
+          </button>
+          <button onClick={() => setShowNotif(true)} className="btn-ghost p-2.5 rounded-lg relative" title="Notifications">
+            <Bell size={15} />
+            {unread > 0 && (
+              <span className="absolute -top-0.5 -right-0.5 min-w-[16px] h-4 px-0.5 rounded-full text-[10px] font-bold flex items-center justify-center text-white"
+                style={{ background: '#ef4444' }}>{unread > 9 ? '9+' : unread}</span>
+            )}
           </button>
           <button onClick={() => { clearToken(); router.push('/login'); }} className="btn-ghost p-2.5 rounded-lg" title="Sign out">
             <LogOut size={15} />
@@ -657,6 +680,63 @@ export default function TrainerPage() {
                 disabled={addClientLoading || !newClientName.trim()}>
                 {addClientLoading ? 'Saving…' : 'Add Client'}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── NOTIFICATION DRAWER ── */}
+      {showNotif && (
+        <div className="fixed inset-0 z-50 flex flex-col justify-end" style={{ background: 'rgba(0,0,0,0.5)' }}
+          onClick={() => setShowNotif(false)}>
+          <div className="glass rounded-t-2xl max-h-[80vh] flex flex-col" style={{ borderTop: '1px solid var(--border)' }}
+            onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between px-5 py-4 border-b" style={{ borderColor: 'var(--border)' }}>
+              <div className="flex items-center gap-2">
+                <Bell size={16} style={{ color: '#A78BFA' }} />
+                <span className="font-bold text-white">Notifications</span>
+                {unread > 0 && (
+                  <span className="px-2 py-0.5 rounded-full text-[10px] font-bold text-white" style={{ background: '#ef4444' }}>{unread} new</span>
+                )}
+              </div>
+              <div className="flex items-center gap-2">
+                {unread > 0 && (
+                  <button className="text-xs font-medium" style={{ color: '#A78BFA' }}
+                    onClick={async () => {
+                      const unreadItems = notifications.filter(n => !n.is_read);
+                      await Promise.all(unreadItems.map(n => trainerMarkRead(n.id).catch(() => {})));
+                      setNotifications(prev => prev.map(n => ({ ...n, is_read: true })));
+                      setUnread(0);
+                    }}>
+                    Mark all read
+                  </button>
+                )}
+                <button onClick={() => setShowNotif(false)} className="btn-ghost p-1.5 rounded-lg"><X size={16} /></button>
+              </div>
+            </div>
+            <div className="overflow-y-auto flex-1 px-4 py-3 space-y-2">
+              {notifications.length === 0 ? (
+                <p className="text-center py-8 text-sm" style={{ color: 'var(--muted)' }}>No notifications yet</p>
+              ) : notifications.map(n => (
+                <div key={n.id} className="rounded-xl p-3.5 flex gap-3 items-start"
+                  style={{ background: n.is_read ? 'var(--surface)' : 'rgba(167,139,250,0.08)', border: '1px solid var(--border)' }}>
+                  <div className="w-2 h-2 rounded-full mt-1.5 flex-shrink-0"
+                    style={{ background: n.is_read ? 'var(--muted)' : (n.type === 'cancelled' ? '#ef4444' : '#A78BFA') }} />
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm text-white leading-snug">{n.message}</p>
+                    <p className="text-[10px] mt-1" style={{ color: 'var(--muted)' }}>
+                      {new Date(n.created_at).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}
+                    </p>
+                  </div>
+                  {!n.is_read && (
+                    <button onClick={async () => {
+                      await trainerMarkRead(n.id).catch(() => {});
+                      setNotifications(prev => prev.map(x => x.id === n.id ? { ...x, is_read: true } : x));
+                      setUnread(prev => Math.max(0, prev - 1));
+                    }} className="text-[10px] flex-shrink-0 mt-0.5" style={{ color: 'var(--muted)' }}>✓ read</button>
+                  )}
+                </div>
+              ))}
             </div>
           </div>
         </div>
