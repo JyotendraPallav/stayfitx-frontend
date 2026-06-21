@@ -36,11 +36,11 @@ export default function LoginPage() {
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
             src="/logo.jpg"
-            alt="StayFit-XbyShyam"
+            alt="FitsYBow"
             className="w-24 h-24 rounded-full object-cover mx-auto mb-4 shadow-2xl"
             style={{ boxShadow: '0 8px 40px rgba(139,92,246,0.4)' }}
           />
-          <h1 className="text-2xl font-bold text-white tracking-tight">StayFit-XbyShyam</h1>
+          <h1 className="text-2xl font-bold text-white tracking-tight">FitsYBow</h1>
           <p className="text-sm mt-1" style={{ color: 'var(--muted)' }}>Trainer Scheduling Platform</p>
         </div>
 

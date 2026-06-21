@@ -2,9 +2,9 @@
 import { useEffect, useState, useCallback, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { getUser, clearToken, adminGetSchedule, adminGetTrainers, adminCreateTrainer, adminGetNotifications, adminMarkRead, adminCancelSeries, adminCancelSession, adminGetSeries } from '@/lib/api';
+import { getUser, clearToken, adminGetSchedule, adminGetTrainers, adminCreateTrainer, adminGetNotifications, adminMarkRead, adminCancelSeries, adminCancelSession, adminGetSeries, adminGetTrainerClients, adminDeleteTrainer, adminDeleteClient, adminGetKpiStats } from '@/lib/api';
 import { format, addDays, subDays, startOfWeek } from 'date-fns';
-import { LogOut, Bell, ChevronLeft, ChevronRight, Plus, X, Clock, MapPin, BarChart2, CalendarDays, Users, Upload, RefreshCw, Repeat, UserCheck, UserX, Phone, Mail, TrendingUp, AlertTriangle, Activity, Zap } from 'lucide-react';
+import { LogOut, Bell, ChevronLeft, ChevronRight, Plus, X, Clock, MapPin, BarChart2, CalendarDays, Users, Upload, RefreshCw, Repeat, UserCheck, UserX, Phone, Mail, TrendingUp, AlertTriangle, Activity, Zap, Trash2 } from 'lucide-react';
 
 type Session = {
   id: string; trainer_name: string; trainer_id: string;
@@ -109,6 +109,25 @@ export default function AdminPage() {
   const [newTrainerPhone, setNewTrainerPhone] = useState('');
   const [formLoading, setFormLoading] = useState(false);
 
+  // Delete trainer flow
+  const [deleteTrainerModal, setDeleteTrainerModal] = useState<{
+    trainer: Trainer;
+    clients: Array<{id: string; name: string; phone?: string}>;
+  } | null>(null);
+  const [deleteAction, setDeleteAction] = useState<'reassign_all' | 'reassign_individually' | 'delete_all'>('reassign_all');
+  const [reassignToId, setReassignToId] = useState('');
+  const [reassignMap, setReassignMap] = useState<Record<string, string>>({});
+  const [deleteTrainerLoading, setDeleteTrainerLoading] = useState(false);
+
+  // Delete client (from trainer profile drawer)
+  const [clientToDelete, setClientToDelete] = useState<{id: string; name: string} | null>(null);
+
+  // KPI stats
+  const [lostClients, setLostClients] = useState<number | null>(null);
+
+  // Trainer clients list (for trainer profile drawer)
+  const [trainerClientsList, setTrainerClientsList] = useState<Array<{id: string; name: string; phone?: string}>>([]);
+
   const showToast = (msg: string) => { setToast(msg); setTimeout(() => setToast(''), 3000); };
 
   // Week days for weekly view
@@ -153,11 +172,13 @@ export default function AdminPage() {
   const fetchSummary = useCallback(async () => {
     setSummaryLoading(true);
     try {
-      const [seriesData, ...weekResults] = await Promise.all([
+      const [seriesData, kpiData, ...weekResults] = await Promise.all([
         adminGetSeries(),
+        adminGetKpiStats(),
         ...weekDays.map(d => adminGetSchedule(d)),
       ]);
       setSummarySeries(seriesData.series || []);
+      setLostClients(kpiData.lost_clients ?? 0);
       const map: Record<string, Session[]> = {};
       weekDays.forEach((d, i) => { map[d] = weekResults[i].sessions; });
       setSummaryWeekSessions(map);
@@ -295,21 +316,76 @@ export default function AdminPage() {
     fetchAll();
   }
 
+  async function handleDeleteClient(clientId: string) {
+    try {
+      await adminDeleteClient(clientId);
+      showToast('Client removed');
+      setClientToDelete(null);
+      if (selectedTrainer) {
+        const data = await adminGetTrainerClients(selectedTrainer.id);
+        setTrainerClientsList(data.clients || []);
+      }
+    } catch (e: unknown) {
+      showToast(e instanceof Error ? e.message : 'Delete failed');
+    }
+  }
+
+  async function handleDeleteTrainer() {
+    if (!deleteTrainerModal) return;
+    const { trainer, clients } = deleteTrainerModal;
+    if (deleteAction === 'reassign_all' && clients.length > 0 && !reassignToId) {
+      showToast('Please select a trainer to reassign clients to'); return;
+    }
+    if (deleteAction === 'reassign_individually' && clients.length > 0) {
+      const unassigned = clients.filter(c => !reassignMap[c.id]);
+      if (unassigned.length > 0) { showToast(`Please assign a trainer for: ${unassigned[0].name}`); return; }
+    }
+    setDeleteTrainerLoading(true);
+    try {
+      await adminDeleteTrainer(trainer.id, {
+        client_action: deleteAction,
+        reassign_to_trainer_id: deleteAction === 'reassign_all' ? reassignToId : null,
+        client_assignments: deleteAction === 'reassign_individually'
+          ? clients.map(c => ({ client_id: c.id, new_trainer_id: reassignMap[c.id] }))
+          : null,
+      });
+      showToast(`Trainer ${trainer.name} deleted`);
+      setDeleteTrainerModal(null);
+      setDeleteAction('reassign_all'); setReassignToId(''); setReassignMap({});
+      fetchAll();
+    } catch (e: unknown) {
+      showToast(e instanceof Error ? e.message : 'Delete failed');
+    } finally { setDeleteTrainerLoading(false); }
+  }
+
+  async function openDeleteTrainer(trainer: Trainer) {
+    try {
+      const data = await adminGetTrainerClients(trainer.id);
+      setDeleteTrainerModal({ trainer, clients: data.clients || [] });
+      setDeleteAction('reassign_all'); setReassignToId(''); setReassignMap({});
+    } catch (e: unknown) {
+      showToast(e instanceof Error ? e.message : 'Failed to load trainer clients');
+    }
+  }
+
   // Open trainer profile drawer — fetches their series + this week's sessions
   async function openTrainerDetail(trainer: Trainer) {
     setSelectedTrainer(trainer);
     setTrainerDetailLoading(true);
     setTrainerSeries([]);
     setTrainerWeekSessions([]);
+    setTrainerClientsList([]);
     try {
-      const [seriesData, ...weekResults] = await Promise.all([
+      const [seriesData, clientsData, ...weekResults] = await Promise.all([
         adminGetSeries(),
+        adminGetTrainerClients(trainer.id),
         ...weekDays.map(d => adminGetSchedule(d)),
       ]);
       const filtered = (seriesData.series as SeriesEntry[]).filter(
         s => s.trainer_name.toLowerCase() === trainer.name.toLowerCase()
       );
       setTrainerSeries(filtered);
+      setTrainerClientsList(clientsData.clients || []);
       const allWeekSessions: Session[] = weekResults.flatMap(
         (r: { sessions: Session[] }) => r.sessions.filter(s => s.trainer_name === trainer.name)
       );
@@ -338,10 +414,10 @@ export default function AdminPage() {
       <nav className="glass sticky top-0 z-40 px-4 py-3 flex justify-between items-center mb-5" style={{ borderRadius: '0 0 1rem 1rem' }}>
         <div className="flex items-center gap-2.5">
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src="/logo.jpg" alt="StayFit-XbyShyam" className="w-9 h-9 rounded-full object-cover flex-shrink-0" />
+          <img src="/logo.jpg" alt="FitsYBow" className="w-9 h-9 rounded-full object-cover flex-shrink-0" />
           <div className="min-w-0">
             <p className="text-white font-bold text-sm leading-none">Syam&apos;s Dashboard</p>
-            <p className="text-[10px] mt-0.5 truncate" style={{ color: 'var(--muted)' }}>StayFit-XbyShyam</p>
+            <p className="text-[10px] mt-0.5 truncate" style={{ color: 'var(--muted)' }}>FitsYBow</p>
           </div>
         </div>
         <div className="flex items-center gap-1">
@@ -643,25 +719,30 @@ export default function AdminPage() {
               ) : trainers.map((t, i) => {
                 const color = TRAINER_PALETTE[i % TRAINER_PALETTE.length];
                 return (
-                  <button key={t.id}
-                    onClick={() => openTrainerDetail(t)}
-                    className="w-full flex items-center justify-between p-4 border-b hover:bg-white/[0.03] active:bg-white/[0.05] transition-colors text-left"
-                    style={{ borderColor: 'var(--border)' }}>
-                    <div className="flex items-center gap-3 min-w-0">
-                      <div className="w-10 h-10 rounded-full flex items-center justify-center text-xs font-bold text-white flex-shrink-0"
-                        style={{ background: color.bg, boxShadow: `0 0 12px ${color.shadow}` }}>
-                        {initials(t.name)}
+                  <div key={t.id} className="flex items-center border-b last:border-b-0" style={{ borderColor: 'var(--border)' }}>
+                    <button
+                      onClick={() => openTrainerDetail(t)}
+                      className="flex-1 flex items-center justify-between p-4 hover:bg-white/[0.03] active:bg-white/[0.05] transition-colors text-left min-w-0">
+                      <div className="flex items-center gap-3 min-w-0">
+                        <div className="w-10 h-10 rounded-full flex items-center justify-center text-xs font-bold text-white flex-shrink-0"
+                          style={{ background: color.bg, boxShadow: `0 0 12px ${color.shadow}` }}>
+                          {initials(t.name)}
+                        </div>
+                        <div className="min-w-0">
+                          <p className="text-sm font-semibold text-white truncate">{t.name}</p>
+                          <p className="text-xs truncate" style={{ color: 'var(--muted)' }}>{t.phone || t.email}</p>
+                        </div>
                       </div>
-                      <div className="min-w-0">
-                        <p className="text-sm font-semibold text-white truncate">{t.name}</p>
-                        <p className="text-xs truncate" style={{ color: 'var(--muted)' }}>{t.phone || t.email}</p>
+                      <div className="flex items-center gap-2 flex-shrink-0 ml-2">
+                        <span className="badge badge-brand">{t.upcoming_sessions} upcoming</span>
+                        <ChevronRight size={14} style={{ color: 'var(--muted)' }} />
                       </div>
-                    </div>
-                    <div className="flex items-center gap-2 flex-shrink-0 ml-2">
-                      <span className="badge badge-brand">{t.upcoming_sessions} upcoming</span>
-                      <ChevronRight size={14} style={{ color: 'var(--muted)' }} />
-                    </div>
-                  </button>
+                    </button>
+                    <button onClick={() => openDeleteTrainer(t)}
+                      className="p-4 flex-shrink-0 btn-ghost" title="Delete trainer">
+                      <Trash2 size={14} style={{ color: '#F87171' }} />
+                    </button>
+                  </div>
                 );
               })}
             </div>
@@ -698,6 +779,19 @@ export default function AdminPage() {
                       </div>
                     </div>
                   ))}
+                </div>
+
+                {/* Lost Clients card */}
+                <div className="glass rounded-2xl p-4 flex items-center gap-4 relative overflow-hidden">
+                  <div className="absolute -right-3 -top-3 w-16 h-16 rounded-full opacity-10" style={{ background: '#F87171' }} />
+                  <div className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0" style={{ background: 'rgba(248,113,113,0.2)' }}>
+                    <UserX size={16} style={{ color: '#F87171' }} />
+                  </div>
+                  <div>
+                    <p className="text-2xl font-extrabold text-white">{lostClients ?? '—'}</p>
+                    <p className="text-xs font-semibold text-white">Lost Clients</p>
+                    <p className="text-[10px] mt-0.5" style={{ color: 'var(--muted)' }}>soft-deleted client accounts</p>
+                  </div>
                 </div>
 
                 {/* Week session bar chart */}
@@ -1098,6 +1192,32 @@ export default function AdminPage() {
                     ))}
                   </div>
 
+                  {/* Clients list with delete */}
+                  {trainerClientsList.length > 0 && (
+                    <div>
+                      <p className="text-xs font-bold uppercase tracking-widest mb-3 flex items-center gap-2" style={{ color: 'var(--muted)' }}>
+                        <Users size={12} /> Clients ({trainerClientsList.length})
+                      </p>
+                      <div className="space-y-1.5">
+                        {trainerClientsList.map(c => (
+                          <div key={c.id} className="rounded-xl px-3.5 py-2.5 flex items-center gap-3"
+                            style={{ background: 'rgba(0,0,0,0.2)', border: '1px solid var(--border)' }}>
+                            <div className="w-7 h-7 rounded-full flex items-center justify-center text-[10px] font-bold text-white flex-shrink-0"
+                              style={{ background: 'rgba(255,255,255,0.1)' }}>
+                              {initials(c.name)}
+                            </div>
+                            <p className="text-sm font-semibold text-white flex-1 truncate">{c.name}</p>
+                            {c.phone && <p className="text-xs" style={{ color: 'var(--muted)' }}>{c.phone}</p>}
+                            <button onClick={() => setClientToDelete({ id: c.id, name: c.name })}
+                              className="p-1.5 rounded-lg hover:bg-red-500/20 flex-shrink-0 transition-colors">
+                              <Trash2 size={13} style={{ color: '#F87171' }} />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
                   {/* Status breakdown */}
                   {trainerWeekSessions.length > 0 && (
                     <div className="rounded-xl p-4 space-y-2" style={{ background: 'rgba(0,0,0,0.2)', border: '1px solid var(--border)' }}>
@@ -1246,6 +1366,122 @@ export default function AdminPage() {
               </div>
             )}
             <button onClick={() => setShowTodaySessions(false)} className="btn-ghost w-full text-sm">Close</button>
+          </div>
+        </div>
+      )}
+
+      {/* ── DELETE TRAINER MODAL ── */}
+      {deleteTrainerModal && (
+        <div className="fixed inset-0 z-50 flex items-end" style={{ background: 'rgba(0,0,0,0.7)' }}
+          onClick={() => !deleteTrainerLoading && setDeleteTrainerModal(null)}>
+          <div className="glass w-full rounded-t-3xl p-6 pb-10 space-y-5 max-h-[90vh] overflow-y-auto"
+            onClick={e => e.stopPropagation()}
+            style={{ animation: 'slideUpSheet 0.25s ease-out' }}>
+            <div className="w-12 h-1 rounded-full bg-white/20 mx-auto" />
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold text-white flex-shrink-0"
+                style={{ background: 'linear-gradient(135deg,#EF4444,#F87171)' }}>
+                {initials(deleteTrainerModal.trainer.name)}
+              </div>
+              <div>
+                <p className="text-white font-bold text-lg">Delete Trainer</p>
+                <p className="text-sm" style={{ color: 'var(--muted)' }}>{deleteTrainerModal.trainer.name}</p>
+              </div>
+            </div>
+
+            {deleteTrainerModal.clients.length > 0 ? (
+              <>
+                <div className="rounded-xl p-3 text-sm" style={{ background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.2)' }}>
+                  <p className="text-amber-400 font-semibold text-xs mb-1">This trainer has active clients</p>
+                  <p className="text-white">{deleteTrainerModal.clients.length} client{deleteTrainerModal.clients.length > 1 ? 's' : ''} will be affected. Choose how to handle them:</p>
+                </div>
+                <div className="space-y-3">
+                  {(['reassign_all', 'reassign_individually', 'delete_all'] as const).map(action => (
+                    <label key={action} className="flex items-start gap-3 cursor-pointer rounded-xl p-4 transition-all"
+                      style={{
+                        background: deleteAction === action ? 'rgba(139,92,246,0.1)' : 'rgba(0,0,0,0.2)',
+                        border: deleteAction === action ? '1px solid rgba(139,92,246,0.4)' : '1px solid var(--border)',
+                      }}>
+                      <input type="radio" name="deleteAction" value={action} checked={deleteAction === action}
+                        onChange={() => { setDeleteAction(action); setReassignToId(''); setReassignMap({}); }}
+                        className="mt-0.5 flex-shrink-0" />
+                      <div className="flex-1 min-w-0">
+                        <p className="text-white font-semibold text-sm">
+                          {action === 'reassign_all' ? 'Reassign all to one trainer' :
+                           action === 'reassign_individually' ? 'Reassign individually' :
+                           'Delete all clients'}
+                        </p>
+                        <p className="text-xs mt-0.5" style={{ color: 'var(--muted)' }}>
+                          {action === 'reassign_all' ? 'Move all clients to another trainer' :
+                           action === 'reassign_individually' ? 'Pick a trainer for each client' :
+                           'Soft-delete all clients (data retained for analytics)'}
+                        </p>
+                        {action === 'reassign_all' && deleteAction === 'reassign_all' && (
+                          <select className="glass-input text-sm mt-3" value={reassignToId}
+                            onChange={e => setReassignToId(e.target.value)}>
+                            <option value="">— Select a trainer —</option>
+                            {trainers.filter(t => t.id !== deleteTrainerModal.trainer.id).map(t => (
+                              <option key={t.id} value={t.id}>{t.name}</option>
+                            ))}
+                          </select>
+                        )}
+                        {action === 'reassign_individually' && deleteAction === 'reassign_individually' && (
+                          <div className="space-y-2 mt-3">
+                            {deleteTrainerModal.clients.map(c => (
+                              <div key={c.id} className="flex items-center gap-2">
+                                <span className="text-xs text-white flex-shrink-0 w-24 truncate">{c.name}</span>
+                                <select className="glass-input text-xs flex-1" value={reassignMap[c.id] || ''}
+                                  onChange={e => setReassignMap(prev => ({ ...prev, [c.id]: e.target.value }))}>
+                                  <option value="">— Trainer —</option>
+                                  {trainers.filter(t => t.id !== deleteTrainerModal.trainer.id).map(t => (
+                                    <option key={t.id} value={t.id}>{t.name}</option>
+                                  ))}
+                                </select>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    </label>
+                  ))}
+                </div>
+              </>
+            ) : (
+              <div className="rounded-xl p-4 text-center" style={{ background: 'rgba(0,0,0,0.2)', border: '1px solid var(--border)' }}>
+                <p className="text-sm text-white">This trainer has no active clients.</p>
+                <p className="text-xs mt-1" style={{ color: 'var(--muted)' }}>The trainer account will be deactivated and their login revoked.</p>
+              </div>
+            )}
+
+            <div className="grid grid-cols-2 gap-3 pt-2">
+              <button onClick={() => setDeleteTrainerModal(null)} className="btn-ghost" disabled={deleteTrainerLoading}>Cancel</button>
+              <button onClick={handleDeleteTrainer} disabled={deleteTrainerLoading}
+                className="rounded-xl py-3 text-sm font-bold text-red-400 transition-colors disabled:opacity-40"
+                style={{ background: 'rgba(239,68,68,0.12)', border: '1px solid rgba(239,68,68,0.3)' }}>
+                {deleteTrainerLoading ? 'Deleting…' : 'Delete Trainer'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── DELETE CLIENT CONFIRMATION ── */}
+      {clientToDelete && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(8px)' }}
+          onClick={() => setClientToDelete(null)}>
+          <div className="glass rounded-2xl w-full max-w-sm p-6 space-y-4" onClick={e => e.stopPropagation()}>
+            <p className="text-white font-bold text-lg">Delete Client?</p>
+            <p className="text-sm" style={{ color: 'var(--muted)' }}>
+              Remove <strong className="text-white">{clientToDelete.name}</strong>? Their historical data is retained. Future sessions will be cancelled.
+            </p>
+            <div className="grid grid-cols-2 gap-3">
+              <button onClick={() => setClientToDelete(null)} className="btn-ghost">Cancel</button>
+              <button onClick={() => handleDeleteClient(clientToDelete.id)}
+                className="rounded-xl py-3 text-sm font-bold text-red-400"
+                style={{ background: 'rgba(239,68,68,0.12)', border: '1px solid rgba(239,68,68,0.3)' }}>
+                Delete
+              </button>
+            </div>
           </div>
         </div>
       )}

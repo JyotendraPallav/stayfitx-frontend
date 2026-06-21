@@ -2,8 +2,8 @@ import type { Metadata } from 'next';
 import './globals.css';
 
 export const metadata: Metadata = {
-  title: 'StayFit-XbyShyam – Schedule',
-  description: 'Trainer scheduling platform by Syam — StayFit-XbyShyam',
+  title: 'FitsYBow – Schedule',
+  description: 'Trainer scheduling platform by Syam — FitsYBow',
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
@@ -15,7 +15,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <meta name="theme-color" content="#8B5CF6" />
         <meta name="apple-mobile-web-app-capable" content="yes" />
         <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-        <meta name="apple-mobile-web-app-title" content="StayFit-X" />
+        <meta name="apple-mobile-web-app-title" content="FitsYBow" />
         <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
         <link rel="apple-touch-icon" href="/logo.jpg" />
         <link rel="preconnect" href="https://fonts.googleapis.com" />

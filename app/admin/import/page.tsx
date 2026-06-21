@@ -120,7 +120,7 @@ export default function ImportPage() {
       <nav className="glass sticky top-0 z-40 px-4 py-3 flex items-center gap-3 mb-6" style={{ borderRadius: '0 0 1rem 1rem' }}>
         <Link href="/admin" className="btn-ghost p-2 rounded-lg"><ArrowLeft size={18} /></Link>
         {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src="/logo.jpg" alt="StayFit-XbyShyam" className="w-8 h-8 rounded-full object-cover" />
+        <img src="/logo.jpg" alt="FitsYBow" className="w-8 h-8 rounded-full object-cover" />
         <div>
           <p className="text-white font-semibold text-sm leading-none">Schedule Import</p>
           <p className="text-xs mt-0.5" style={{ color: 'var(--muted)' }}>Parse WhatsApp screenshots</p>
@@ -166,7 +166,7 @@ export default function ImportPage() {
             <h2 className="text-white font-bold text-lg">Upload Schedule Screenshot</h2>
           </div>
 
-          <input ref={fileRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={handleFileSelect} />
+          <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={handleFileSelect} />
 
           {!preview ? (
             <button onClick={() => fileRef.current?.click()}
@@ -176,7 +176,7 @@ export default function ImportPage() {
                 style={{ background: 'rgba(139,92,246,0.1)' }}>
                 <Upload size={24} style={{ color: 'var(--brand-light)' }} />
               </div>
-              <p className="text-white font-semibold">Tap to upload or take photo</p>
+              <p className="text-white font-semibold">Tap to select image</p>
               <p className="text-xs" style={{ color: 'var(--muted)' }}>WhatsApp schedule screenshot — PNG, JPG</p>
             </button>
           ) : (
@@ -320,7 +320,7 @@ export default function ImportPage() {
           <div className="space-y-3">
             {[
               { step: 'Select', desc: 'Choose the trainer whose schedule you are importing from the dropdown.' },
-              { step: 'Upload', desc: 'Take a photo or upload a screenshot of the WhatsApp schedule message.' },
+              { step: 'Upload', desc: 'Select a screenshot of the WhatsApp schedule message from your files.' },
               { step: 'Analyse', desc: 'The app reads the image and extracts client names, session times, and recurring days automatically.' },
               { step: 'Review', desc: 'Edit or remove any sessions before confirming.' },
               { step: 'Import', desc: 'Sessions are created as recurring series for the next 90 days. Done!' },

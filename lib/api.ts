@@ -1,29 +1,29 @@
-// Centralized API utility for StayFitx
+// Centralized API utility for FitsYBow
 
 const API = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8001';
 
 export function getToken(): string | null {
   if (typeof window === 'undefined') return null;
-  return localStorage.getItem('stayfitx_token');
+  return localStorage.getItem('fitsybow_token');
 }
 
 export function setToken(token: string) {
-  localStorage.setItem('stayfitx_token', token);
+  localStorage.setItem('fitsybow_token', token);
 }
 
 export function clearToken() {
-  localStorage.removeItem('stayfitx_token');
-  localStorage.removeItem('stayfitx_user');
+  localStorage.removeItem('fitsybow_token');
+  localStorage.removeItem('fitsybow_user');
 }
 
 export function getUser(): { role: string; name: string; email: string } | null {
   if (typeof window === 'undefined') return null;
-  const u = localStorage.getItem('stayfitx_user');
+  const u = localStorage.getItem('fitsybow_user');
   return u ? JSON.parse(u) : null;
 }
 
 export function setUser(user: object) {
-  localStorage.setItem('stayfitx_user', JSON.stringify(user));
+  localStorage.setItem('fitsybow_user', JSON.stringify(user));
 }
 
 async function apiFetch(path: string, options: RequestInit = {}) {
@@ -87,3 +87,10 @@ export const trainerRescheduleSession = (id: string, body: object) =>
   apiFetch(`/trainer/sessions/${id}/reschedule`, { method: 'PATCH', body: JSON.stringify(body) });
 export const trainerGetNotifications = () => apiFetch('/trainer/notifications');
 export const trainerMarkRead = (id: string) => apiFetch(`/trainer/notifications/${id}/read`, { method: 'PATCH' });
+export const trainerDeleteClient = (clientId: string) => apiFetch(`/trainer/clients/${clientId}`, { method: 'DELETE' });
+
+// ── Admin soft-delete ─────────────────────────────────────────────────────────
+export const adminGetTrainerClients = (trainerId: string) => apiFetch(`/admin/trainers/${trainerId}/clients`);
+export const adminDeleteTrainer = (trainerId: string, body: object) => apiFetch(`/admin/trainers/${trainerId}/delete`, { method: 'POST', body: JSON.stringify(body) });
+export const adminDeleteClient = (clientId: string) => apiFetch(`/admin/clients/${clientId}`, { method: 'DELETE' });
+export const adminGetKpiStats = () => apiFetch('/admin/kpi/stats');

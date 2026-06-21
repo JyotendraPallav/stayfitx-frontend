@@ -5,13 +5,13 @@ import {
   getUser, clearToken,
   trainerGetSchedule, trainerGetClients, trainerAddClient,
   trainerBookSession, trainerCancelSession, trainerRescheduleSession,
-  trainerGetNotifications, trainerMarkRead,
+  trainerGetNotifications, trainerMarkRead, trainerDeleteClient,
 } from '@/lib/api';
 import { format, addDays, subDays } from 'date-fns';
 import {
   LogOut, ChevronLeft, ChevronRight, Plus, X,
   Clock, MapPin, RefreshCw, Repeat, CalendarDays,
-  Users, BookOpen, CheckCircle, Bell,
+  Users, BookOpen, CheckCircle, Bell, Trash2,
 } from 'lucide-react';
 
 type Session = {
@@ -61,6 +61,9 @@ export default function TrainerPage() {
   const [newClientPhone, setNewClientPhone] = useState('');
   const [newClientNotes, setNewClientNotes] = useState('');
   const [addClientLoading, setAddClientLoading] = useState(false);
+
+  // Delete client
+  const [clientToDelete, setClientToDelete] = useState<Client | null>(null);
 
   // Notifications
   const [notifications, setNotifications] = useState<{id: string; type: string; message: string; is_read: boolean; created_at: string}[]>([]);
@@ -166,6 +169,18 @@ export default function TrainerPage() {
     } finally { setAddClientLoading(false); }
   }
 
+  async function handleDeleteClient() {
+    if (!clientToDelete) return;
+    try {
+      await trainerDeleteClient(clientToDelete.id);
+      showToast('Client removed');
+      setClientToDelete(null);
+      fetchClients();
+    } catch (e: unknown) {
+      showToast(e instanceof Error ? e.message : 'Delete failed');
+    }
+  }
+
   async function handleBookSession() {
     if (!bookClientId || !bookDate || !bookStartTime || !bookEndTime) return;
     if (bookRecurring && bookRecurDays.length === 0) {
@@ -217,10 +232,10 @@ export default function TrainerPage() {
         style={{ borderRadius: '0 0 1rem 1rem' }}>
         <div className="flex items-center gap-2.5">
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src="/logo.jpg" alt="StayFit-XbyShyam" className="w-9 h-9 rounded-full object-cover flex-shrink-0" />
+          <img src="/logo.jpg" alt="FitsYBow" className="w-9 h-9 rounded-full object-cover flex-shrink-0" />
           <div className="min-w-0">
             <p className="text-white font-bold text-sm leading-none truncate">{user?.name || 'Trainer'}</p>
-            <p className="text-[10px] mt-0.5" style={{ color: 'var(--muted)' }}>StayFit-XbyShyam</p>
+            <p className="text-[10px] mt-0.5" style={{ color: 'var(--muted)' }}>FitsYBow</p>
           </div>
         </div>
         <div className="flex items-center gap-1">
@@ -376,10 +391,16 @@ export default function TrainerPage() {
                       {c.phone && <p className="text-xs" style={{ color: 'var(--muted)' }}>{c.phone}</p>}
                       {c.notes && <p className="text-xs truncate opacity-60" style={{ color: 'var(--muted)' }}>{c.notes}</p>}
                     </div>
-                    <button onClick={() => { setBookClientId(c.id); setTab('book'); }}
-                      className="btn-ghost py-1.5 px-3 text-xs flex-shrink-0 flex items-center gap-1">
-                      <BookOpen size={11} /> Book
-                    </button>
+                    <div className="flex items-center gap-1 flex-shrink-0">
+                      <button onClick={() => { setBookClientId(c.id); setTab('book'); }}
+                        className="btn-ghost py-1.5 px-3 text-xs flex items-center gap-1">
+                        <BookOpen size={11} /> Book
+                      </button>
+                      <button onClick={() => setClientToDelete(c)}
+                        className="p-1.5 rounded-lg hover:bg-red-500/20 transition-colors">
+                        <Trash2 size={13} style={{ color: '#F87171' }} />
+                      </button>
+                    </div>
                   </div>
                 ))}
               </div>
@@ -737,6 +758,27 @@ export default function TrainerPage() {
                   )}
                 </div>
               ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── DELETE CLIENT CONFIRMATION ── */}
+      {clientToDelete && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(8px)' }}
+          onClick={() => setClientToDelete(null)}>
+          <div className="glass rounded-2xl w-full max-w-sm p-6 space-y-4" onClick={e => e.stopPropagation()}>
+            <p className="text-white font-bold text-lg">Remove Client?</p>
+            <p className="text-sm" style={{ color: 'var(--muted)' }}>
+              Remove <strong className="text-white">{clientToDelete.name}</strong>? Historical data is retained. Future sessions will be cancelled.
+            </p>
+            <div className="grid grid-cols-2 gap-3">
+              <button onClick={() => setClientToDelete(null)} className="btn-ghost">Cancel</button>
+              <button onClick={handleDeleteClient}
+                className="rounded-xl py-3 text-sm font-bold text-red-400"
+                style={{ background: 'rgba(239,68,68,0.12)', border: '1px solid rgba(239,68,68,0.3)' }}>
+                Remove
+              </button>
             </div>
           </div>
         </div>
